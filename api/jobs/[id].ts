@@ -47,6 +47,14 @@ const validateJob = (payload: JobInput) => {
   return errors;
 };
 
+const timeSlotOverlaps = (first: TimeSlot, second: TimeSlot) => {
+  if (first === "Cả ngày" || second === "Cả ngày") return true;
+  if (first === second) return true;
+  if (first === "Sáng và chiều") return ["Buổi sáng", "Buổi chiều"].includes(second);
+  if (second === "Sáng và chiều") return ["Buổi sáng", "Buổi chiều"].includes(first);
+  return false;
+};
+
 const toJobResponse = (job: any) => ({
   id: job._id?.toString?.() ?? String(job._id),
   date: job.date,
@@ -87,6 +95,18 @@ export default async function handler(req: any, res: any) {
 
     if (errors.length) {
       res.status(400).json({ error: "INVALID_INPUT", fields: errors });
+      return;
+    }
+
+    const existing = await collection
+      .find({ date: payload.date, _id: { $ne: objectId } })
+      .toArray();
+    const conflicts = existing.filter((job) =>
+      timeSlotOverlaps(job.timeSlot as TimeSlot, payload.timeSlot as TimeSlot)
+    );
+
+    if (conflicts.length) {
+      res.status(409).json({ error: "CONFLICT", conflicts: conflicts.map(toJobResponse) });
       return;
     }
 

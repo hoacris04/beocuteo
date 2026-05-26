@@ -1,5 +1,16 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { CalendarDays, Plus, Search, Wallet, Briefcase, Bell, BarChart3 } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  CalendarDays,
+  Plus,
+  Search,
+  Wallet,
+  Briefcase,
+  Bell,
+  BarChart3,
+  Trash2,
+  Download,
+  Upload,
+} from "lucide-react";
 import { motion } from "framer-motion";
 
 type TimeSlot = "Buổi sáng" | "Buổi chiều" | "Buổi tối" | "Sáng và chiều" | "Cả ngày";
@@ -58,6 +69,22 @@ const jobsForCalendarSection = (jobs: Job[], section: TimeSlot) => {
   return jobs.filter((job) => ["Buổi tối", "Cả ngày"].includes(job.timeSlot));
 };
 
+const timeSlotOverlaps = (first: TimeSlot, second: TimeSlot) => {
+  if (first === "Cả ngày" || second === "Cả ngày") return true;
+  if (first === second) return true;
+  if (first === "Sáng và chiều") return ["Buổi sáng", "Buổi chiều"].includes(second);
+  if (second === "Sáng và chiều") return ["Buổi sáng", "Buổi chiều"].includes(first);
+  return false;
+};
+
+const findConflictJobs = (jobs: Job[], candidate: JobForm, editingId: string | null) =>
+  jobs.filter(
+    (job) =>
+      job.id !== editingId &&
+      job.date === candidate.date &&
+      timeSlotOverlaps(job.timeSlot, candidate.timeSlot)
+  );
+
 const initialJobs: Job[] = [
   {
     id: "seed-1",
@@ -101,8 +128,15 @@ export default function JobCalendarApp() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
   const [apiError, setApiError] = useState("");
+  const [apiNotice, setApiNotice] = useState("");
+  const [apiNoticeTone, setApiNoticeTone] = useState<"success" | "error">("success");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState(0);
+  const [importError, setImportError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [form, setForm] = useState<JobForm>({
     date: todayISO(),
     timeSlot: "Buổi sáng",
@@ -184,11 +218,9 @@ export default function JobCalendarApp() {
     return nextErrors;
   };
 
-  useEffect(() => {
-    let isMounted = true;
-
-    const loadJobs = async () => {
-      setIsLoading(true);
+  const fetchJobs = useCallback(
+    async ({ silent } = { silent: false }) => {
+      if (!silent) setIsLoading(true);
       setApiError("");
 
       try {
@@ -197,33 +229,38 @@ export default function JobCalendarApp() {
           throw new Error("LOAD_FAILED");
         }
         const payload = await response.json();
-        if (isMounted) {
-          setJobs(Array.isArray(payload.data) ? payload.data : []);
-        }
+        setJobs(Array.isArray(payload.data) ? payload.data : []);
       } catch {
-        if (isMounted) {
-          setApiError("Không thể tải dữ liệu từ MongoDB. Đang hiển thị dữ liệu mẫu.");
-        }
+        setApiError("Không thể tải dữ liệu từ MongoDB. Đang hiển thị dữ liệu mẫu.");
       } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
+        if (!silent) setIsLoading(false);
       }
-    };
+    },
+    []
+  );
 
-    loadJobs();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+  useEffect(() => {
+    fetchJobs();
+  }, [fetchJobs]);
 
   const saveJob = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
+    setApiNotice("");
+
     const nextErrors = validateForm(form);
     if (Object.keys(nextErrors).length > 0) {
       setErrors(nextErrors);
+      return;
+    }
+
+    const conflicts = findConflictJobs(jobs, form, editingId);
+    if (conflicts.length) {
+      const conflictNames = conflicts.map((job) => job.name).slice(0, 3).join(", ");
+      const suffix = conflicts.length > 3 ? "..." : "";
+      setErrors({
+        form: `Trùng lịch: đã có job cùng khung giờ trong ngày (${conflictNames}${suffix}).`,
+      });
       return;
     }
 
@@ -260,7 +297,16 @@ export default function JobCalendarApp() {
           deposit: "Tiền cọc không hợp lệ.",
         };
 
-        if (Array.isArray(errorPayload.fields)) {
+        if (response.status === 409 && Array.isArray(errorPayload.conflicts)) {
+          const conflictNames = errorPayload.conflicts
+            .map((job: Job) => job.name)
+            .slice(0, 3)
+            .join(", ");
+          const suffix = errorPayload.conflicts.length > 3 ? "..." : "";
+          setErrors({
+            form: `Trùng lịch: đã có job cùng khung giờ trong ngày (${conflictNames}${suffix}).`,
+          });
+        } else if (Array.isArray(errorPayload.fields)) {
           const nextFieldErrors: FormErrors = { form: "Vui lòng kiểm tra lại các trường." };
           errorPayload.fields.forEach((field: string) => {
             if (field in fieldMessages) {
@@ -288,9 +334,14 @@ export default function JobCalendarApp() {
         setJobs((current) => [nextJob, ...current]);
       }
 
+      setApiNoticeTone("success");
+      setApiNotice(editingId ? "Đã cập nhật job." : "Đã thêm job mới.");
+
       resetForm();
     } catch {
       setErrors({ form: "Không thể kết nối MongoDB. Vui lòng thử lại." });
+      setApiNoticeTone("error");
+      setApiNotice("Không thể kết nối MongoDB.");
     } finally {
       setIsSaving(false);
     }
@@ -298,6 +349,8 @@ export default function JobCalendarApp() {
 
   const editJob = (job: Job) => {
     setEditingId(job.id);
+    setErrors({});
+    setApiNotice("");
     setForm({
       date: job.date,
       timeSlot: job.timeSlot || "Buổi sáng",
@@ -309,6 +362,126 @@ export default function JobCalendarApp() {
       paid: job.paid,
     });
   };
+
+  const deleteJob = async () => {
+    if (!editingId) return;
+    const currentJob = jobs.find((job) => job.id === editingId);
+    if (!currentJob) return;
+    const confirmed = window.confirm(`Xóa job "${currentJob.name}"?`);
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+    setApiNotice("");
+    setErrors({});
+
+    try {
+      const response = await fetch(`/api/jobs/${editingId}`, { method: "DELETE" });
+      if (!response.ok) {
+        setErrors({ form: "Không thể xóa job. Vui lòng thử lại." });
+        setApiNoticeTone("error");
+        setApiNotice("Xóa job thất bại.");
+        return;
+      }
+
+      setJobs((current) => current.filter((job) => job.id !== editingId));
+      setApiNoticeTone("success");
+      setApiNotice("Đã xóa job.");
+      resetForm();
+    } catch {
+      setErrors({ form: "Không thể kết nối MongoDB. Vui lòng thử lại." });
+      setApiNoticeTone("error");
+      setApiNotice("Không thể kết nối MongoDB.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const exportJobs = () => {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      jobs,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `lich-job-${todayISO()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsImporting(true);
+    setImportProgress(0);
+    setImportError("");
+    setApiNotice("");
+
+    try {
+      const content = await file.text();
+      const parsed = JSON.parse(content);
+      const items = Array.isArray(parsed) ? parsed : parsed?.jobs;
+
+      if (!Array.isArray(items)) {
+        setImportError("File không đúng định dạng JSON của job.");
+        return;
+      }
+
+      const sanitized = items
+        .filter((item) => item && typeof item === "object")
+        .map((item) => ({
+          date: String(item.date || ""),
+          timeSlot: item.timeSlot as TimeSlot,
+          name: String(item.name || ""),
+          type: String(item.type || "Event"),
+          location: String(item.location || ""),
+          salary: Number(item.salary || 0),
+          deposit: Number(item.deposit || 0),
+          paid: Boolean(item.paid),
+        }))
+        .filter(
+          (item) =>
+            item.date &&
+            timeSlots.includes(item.timeSlot) &&
+            item.name &&
+            item.location &&
+            item.salary > 0
+        );
+
+      if (!sanitized.length) {
+        setImportError("Không có job hợp lệ để import.");
+        return;
+      }
+
+      let successCount = 0;
+      for (let i = 0; i < sanitized.length; i++) {
+        const response = await fetch("/api/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(sanitized[i]),
+        });
+        if (response.ok) {
+          successCount += 1;
+        }
+        setImportProgress(Math.round(((i + 1) / sanitized.length) * 100));
+      }
+
+      await fetchJobs({ silent: true });
+      setApiNoticeTone("success");
+      setApiNotice(`Đã import ${successCount}/${sanitized.length} job.`);
+    } catch {
+      setImportError("Không thể đọc file import.");
+    } finally {
+      setIsImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const triggerImport = () => fileInputRef.current?.click();
 
   const calendarDays = useMemo(() => {
     const [year, monthNumber] = month.split("-").map(Number);
@@ -382,6 +555,48 @@ export default function JobCalendarApp() {
           <StatCard icon={<Wallet />} label="Tổng lương" value={formatMoney(stats.totalSalary)} />
           <StatCard icon={<BarChart3 />} label="Đã cọc" value={formatMoney(stats.totalDeposit)} />
           <StatCard icon={<Bell />} label="Còn cần thu" value={formatMoney(stats.unpaid)} />
+        </section>
+
+        <section className="mb-6 flex flex-col gap-3 rounded-3xl bg-white/90 p-4 shadow-sm backdrop-blur md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <button
+              type="button"
+              onClick={exportJobs}
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-700 hover:border-slate-300"
+            >
+              <Download className="h-4 w-4" /> Xuất JSON
+            </button>
+            <button
+              type="button"
+              onClick={triggerImport}
+              disabled={isImporting}
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 font-semibold text-slate-700 hover:border-slate-300 disabled:opacity-60"
+            >
+              <Upload className="h-4 w-4" /> {isImporting ? "Đang import..." : "Import JSON"}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/json"
+              className="hidden"
+              onChange={handleImportFile}
+            />
+            {isImporting && (
+              <span className="text-xs text-slate-500">Tiến độ: {importProgress}%</span>
+            )}
+            {importError && <span className="text-xs font-semibold text-rose-600">{importError}</span>}
+          </div>
+          {apiNotice && (
+            <div
+              className={`rounded-2xl px-3 py-2 text-sm font-semibold ${
+                apiNoticeTone === "success"
+                  ? "bg-emerald-50 text-emerald-700"
+                  : "bg-rose-50 text-rose-700"
+              }`}
+            >
+              {apiNotice}
+            </div>
+          )}
         </section>
 
         <main className="grid gap-6 lg:grid-cols-[380px_1fr]">
@@ -533,13 +748,24 @@ export default function JobCalendarApp() {
                   {isSaving ? "Đang lưu..." : editingId ? "Lưu thay đổi" : "Thêm vào lịch"}
                 </button>
                 {editingId !== null && (
-                  <button
-                    className="rounded-2xl bg-slate-100 px-4 py-3 font-semibold"
-                    type="button"
-                    onClick={resetForm}
-                  >
-                    Hủy
-                  </button>
+                  <>
+                    <button
+                      className="rounded-2xl bg-slate-100 px-4 py-3 font-semibold"
+                      type="button"
+                      onClick={resetForm}
+                      disabled={isSaving || isDeleting}
+                    >
+                      Hủy
+                    </button>
+                    <button
+                      className="rounded-2xl bg-rose-50 px-4 py-3 font-semibold text-rose-700 hover:bg-rose-100"
+                      type="button"
+                      onClick={deleteJob}
+                      disabled={isSaving || isDeleting}
+                    >
+                      {isDeleting ? "Đang xóa..." : "Xóa"}
+                    </button>
+                  </>
                 )}
               </div>
             </form>
