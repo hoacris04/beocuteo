@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-body: "Be Vietnam Pro", sans-serif;
+}
+
+body {
+  font-family: var(--font-body);
+  color: #0f172a;
+  background: #f8fafc;
+}
+
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+.input {
+  width: 100%;
+  border-radius: 1rem;
+  border: 1px solid rgb(226 232 240);
+  background: white;
+  padding: 0.75rem 0.9rem;
+  outline: none;
+  transition: box-shadow 150ms ease, border-color 150ms ease;
+}
+
+.input:focus {
+  border-color: rgb(15 23 42);
+  box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.08);
+}
+
+@keyframes floaty {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -16px, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.bg-orb {
+  animation: floaty 16s ease-in-out infinite;
+}
+
+.bg-orb.delay {
+  animation-delay: -6s;
+}
