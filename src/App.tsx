@@ -279,7 +279,7 @@ export default function JobCalendarApp() {
     };
 
     try {
-      const response = await fetch(editingId ? `/api/jobs/${editingId}` : "/api/jobs", {
+      const response = await fetch(editingId ? `/api/jobs?id=${editingId}` : "/api/jobs", {
         method: editingId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -375,7 +375,7 @@ export default function JobCalendarApp() {
     setErrors({});
 
     try {
-      const response = await fetch(`/api/jobs/${editingId}`, { method: "DELETE" });
+      const response = await fetch(`/api/jobs?id=${editingId}`, { method: "DELETE" });
       if (!response.ok) {
         setErrors({ form: "Không thể xóa job. Vui lòng thử lại." });
         setApiNoticeTone("error");

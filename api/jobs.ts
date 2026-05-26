@@ -1,3 +1,4 @@
+import { ObjectId } from "mongodb";
 import { getCollectionName, getDatabaseName, getMongoClient } from "./_lib/mongo.js";
 
 const timeSlots = ["Buổi sáng", "Buổi chiều", "Buổi tối", "Sáng và chiều", "Cả ngày"] as const;
@@ -113,6 +114,76 @@ export default async function handler(req: any, res: any) {
 
     const result = await collection.insertOne(document);
     res.status(201).json({ data: toJobResponse({ ...document, _id: result.insertedId }) });
+    return;
+  }
+
+  if (req.method === "PUT" || req.method === "DELETE") {
+    const { id } = req.query ?? {};
+
+    if (!id || Array.isArray(id)) {
+      res.status(400).json({ error: "INVALID_ID" });
+      return;
+    }
+
+    let objectId: ObjectId;
+    try {
+      objectId = new ObjectId(id);
+    } catch {
+      res.status(400).json({ error: "INVALID_ID" });
+      return;
+    }
+
+    if (req.method === "PUT") {
+      const payload = parseBody(req.body);
+      const errors = validateJob(payload);
+
+      if (errors.length) {
+        res.status(400).json({ error: "INVALID_INPUT", fields: errors });
+        return;
+      }
+
+      const existing = await collection
+        .find({ date: payload.date, _id: { $ne: objectId } })
+        .toArray();
+      const conflicts = existing.filter((job) =>
+        timeSlotOverlaps(job.timeSlot as TimeSlot, payload.timeSlot as TimeSlot)
+      );
+
+      if (conflicts.length) {
+        res.status(409).json({ error: "CONFLICT", conflicts: conflicts.map(toJobResponse) });
+        return;
+      }
+
+      const updatedAt = new Date().toISOString();
+      const update = {
+        date: payload.date,
+        timeSlot: payload.timeSlot,
+        name: payload.name?.trim(),
+        type: payload.type?.trim(),
+        location: payload.location?.trim(),
+        salary: Number(payload.salary),
+        deposit: Number(payload.deposit ?? 0),
+        paid: Boolean(payload.paid),
+        updatedAt,
+      };
+
+      const result = await collection.findOneAndUpdate(
+        { _id: objectId },
+        { $set: update },
+        { returnDocument: "after" }
+      );
+
+      if (!result.value) {
+        res.status(404).json({ error: "NOT_FOUND" });
+        return;
+      }
+
+      res.status(200).json({ data: toJobResponse(result.value) });
+      return;
+    }
+
+    const result = await collection.deleteOne({ _id: objectId });
+    res.status(200).json({ ok: result.deletedCount === 1 });
     return;
   }
 
