@@ -1,5 +1,5 @@
 import { ObjectId } from "mongodb";
-import { getCollectionName, getDatabaseName, getMongoClient } from "../_lib/mongo";
+import { getCollectionName, getDatabaseName, getMongoClient } from "../_lib/mongo.js";
 
 const timeSlots = ["Buổi sáng", "Buổi chiều", "Buổi tối", "Sáng và chiều", "Cả ngày"] as const;
 
